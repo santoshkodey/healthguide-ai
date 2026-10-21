@@ -40,6 +40,7 @@ export interface AssessmentInput {
   customDescription: string;
   duration: SymptomDuration;
   contextFactors: ContextFactor[];
+  inputLanguage?: string;
 }
 
 export interface TriggeredRule {
@@ -64,6 +65,24 @@ export interface EmergencyContact {
   isPrimary?: boolean;
 }
 
+export interface WarningSignCheck {
+  id: string;
+  category: string;
+  question: string;
+  status: 'detected' | 'not_detected';
+  reason: string;
+}
+
+export interface ExplainabilityDetails {
+  reportedSymptoms: string[];
+  checkedWarningSigns: WarningSignCheck[];
+  guidanceRationale: string;
+  missingInformation: string[];
+  systemLimitations: string[];
+  logicSource: 'deterministic_safety_rules' | 'ai_insights';
+  clinicalReviewNotice: string;
+}
+
 export interface TriageResult {
   tier: TriageTier;
   headline: string;
@@ -73,6 +92,7 @@ export interface TriageResult {
   emergencyContacts: EmergencyContact[];
   questionsForDoctor: string[];
   monitoringGuidance: string[];
+  explainability: ExplainabilityDetails;
   disclaimer: string;
   timestamp: string;
 }

@@ -76,11 +76,11 @@ export function Footer() {
             </ul>
           </div>
 
-          {/* Hackathon & Safety */}
+          {/* Clinical Safety */}
           <div>
-            <h4 className="text-sm font-semibold text-white uppercase tracking-wider mb-3">Hackathon Prototype</h4>
+            <h4 className="text-sm font-semibold text-white uppercase tracking-wider mb-3">Clinical Safety & Protocol</h4>
             <p className="text-xs text-slate-400 leading-relaxed mb-3">
-              Built for demonstration purposes. Features deterministic rule-based safety triage, live OpenStreetMap & Google Places connectivity, and optional AI doctor conversation prep.
+              Features deterministic rule-based safety triage, live OpenStreetMap & Google Places connectivity, and structured doctor conversation preparation.
             </p>
             <div className="flex items-center gap-1.5 text-xs text-slate-400">
               <Shield className="w-3.5 h-3.5 text-teal-400" />
@@ -91,7 +91,7 @@ export function Footer() {
 
         {/* Bottom Banner */}
         <div className="pt-8 border-t border-slate-800 text-xs text-slate-400 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <p>© {new Date().getFullYear()} HealthGuide AI. Developed for College Hackathon Demonstration.</p>
+          <p>© {new Date().getFullYear()} HealthGuide AI — Smart Care Navigator. All rights reserved.</p>
           <div className="flex items-center gap-4">
             <Link href="/about" className="hover:text-teal-300">
               Medical Limitations

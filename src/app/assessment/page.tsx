@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Activity,
@@ -9,15 +9,21 @@ import {
   ArrowRight,
   Check,
   CheckCircle2,
+  ChevronDown,
   Clock,
+  Globe,
   Info,
   Loader2,
   Lock,
+  Mic,
+  MicOff,
   RefreshCw,
   Search,
   Shield,
   Stethoscope,
   User,
+  Volume2,
+  X,
 } from 'lucide-react';
 import {
   AGE_GROUP_OPTIONS,
@@ -28,6 +34,13 @@ import {
 import { AgeGroup, ContextFactor, SymptomDuration } from '@/types/assessment';
 import { assessmentInputSchema } from '@/lib/validation';
 import { MedicalDisclaimer } from '@/components/MedicalDisclaimer';
+import {
+  INDIAN_LANGUAGES,
+  DEFAULT_LANGUAGE,
+  IndianLanguage,
+  searchLanguages,
+} from '@/lib/languages';
+import { speechProvider, SpeechRecognitionErrorPayload } from '@/lib/speech';
 
 interface FormDataState {
   ageGroup: AgeGroup | '';
@@ -35,6 +48,7 @@ interface FormDataState {
   customDescription: string;
   duration: SymptomDuration | '';
   contextFactors: ContextFactor[];
+  inputLanguage: string;
 }
 
 const INITIAL_FORM_STATE: FormDataState = {
@@ -43,6 +57,7 @@ const INITIAL_FORM_STATE: FormDataState = {
   customDescription: '',
   duration: '1_to_3_days',
   contextFactors: [],
+  inputLanguage: DEFAULT_LANGUAGE.code,
 };
 
 const STORAGE_KEY = 'healthguide_draft_assessment';
@@ -59,6 +74,30 @@ export default function AssessmentPage() {
   const [serverError, setServerError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Speech Recognition States (Feature 4)
+  const [selectedLanguage, setSelectedLanguage] = useState<IndianLanguage>(DEFAULT_LANGUAGE);
+  const [isLanguageModalOpen, setIsLanguageModalOpen] = useState(false);
+  const [languageSearchQuery, setLanguageSearchQuery] = useState('');
+  const [isListening, setIsListening] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const [recognizedSegment, setRecognizedSegment] = useState<string | null>(null);
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  const [browserSpeechSupported, setBrowserSpeechSupported] = useState(true);
+
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Check Web Speech API availability on mount
+  useEffect(() => {
+    setBrowserSpeechSupported(speechProvider.isSupported());
+  }, []);
+
+  // Clean up any speech recognition session when component unmounts or step changes
+  useEffect(() => {
+    return () => {
+      speechProvider.abort();
+    };
+  }, [activeStep]);
+
   // Load draft from sessionStorage on mount if exists
   useEffect(() => {
     try {
@@ -66,6 +105,10 @@ export default function AssessmentPage() {
       if (saved) {
         const parsed = JSON.parse(saved);
         setFormData((prev) => ({ ...prev, ...parsed }));
+        if (parsed.inputLanguage) {
+          const match = INDIAN_LANGUAGES.find((l) => l.code === parsed.inputLanguage);
+          if (match) setSelectedLanguage(match);
+        }
       }
     } catch {
       // Ignore storage read error
@@ -111,6 +154,11 @@ export default function AssessmentPage() {
 
   const handleResetForm = () => {
     if (window.confirm('Are you sure you want to reset all form inputs?')) {
+      speechProvider.abort();
+      setIsListening(false);
+      setLiveTranscript('');
+      setRecognizedSegment(null);
+      setSpeechError(null);
       setFormData(INITIAL_FORM_STATE);
       setActiveStep(1);
       setFieldErrors({});
@@ -120,6 +168,89 @@ export default function AssessmentPage() {
       } catch {
         // Ignore
       }
+    }
+  };
+
+  // SPEECH RECOGNITION CONTROLS (Feature 4)
+  const handleStartListening = () => {
+    setSpeechError(null);
+    setLiveTranscript('');
+    setRecognizedSegment(null);
+
+    if (selectedLanguage.supportTier === 'unsupported_browser') {
+      setSpeechError(
+        `Standard browser speech engines do not bundle voice models for ${selectedLanguage.name}. Please type symptoms directly in your native script.`
+      );
+      return;
+    }
+
+    const started = speechProvider.start(selectedLanguage.code, {
+      onStart: () => {
+        setIsListening(true);
+      },
+      onResult: ({ transcript, isFinal }) => {
+        setLiveTranscript(transcript);
+        if (isFinal) {
+          setRecognizedSegment(transcript);
+        }
+      },
+      onError: (err: SpeechRecognitionErrorPayload) => {
+        setIsListening(false);
+        setSpeechError(err.message);
+      },
+      onEnd: () => {
+        setIsListening(false);
+      },
+    });
+
+    if (!started && !speechProvider.isSupported()) {
+      setSpeechError('Speech recognition is unavailable in this browser. Please type your symptoms.');
+    }
+  };
+
+  const handleStopListening = () => {
+    speechProvider.stop();
+    setIsListening(false);
+    if (liveTranscript && !recognizedSegment) {
+      setRecognizedSegment(liveTranscript);
+    }
+  };
+
+  // Append recognized speech to description
+  const handleAppendRecognizedText = () => {
+    if (!recognizedSegment) return;
+    setFormData((prev) => {
+      const existing = prev.customDescription.trim();
+      const updated = existing ? `${existing} ${recognizedSegment}` : recognizedSegment;
+      return { ...prev, customDescription: updated.slice(0, 1000) };
+    });
+    setRecognizedSegment(null);
+    setLiveTranscript('');
+    // Focus textarea
+    setTimeout(() => textareaRef.current?.focus(), 50);
+  };
+
+  // Replace description with recognized speech
+  const handleReplaceDescription = () => {
+    if (!recognizedSegment) return;
+    setFormData((prev) => ({
+      ...prev,
+      customDescription: recognizedSegment.slice(0, 1000),
+    }));
+    setRecognizedSegment(null);
+    setLiveTranscript('');
+    setTimeout(() => textareaRef.current?.focus(), 50);
+  };
+
+  // Select language from picker
+  const handleSelectLanguage = (lang: IndianLanguage) => {
+    setSelectedLanguage(lang);
+    setFormData((prev) => ({ ...prev, inputLanguage: lang.code }));
+    setIsLanguageModalOpen(false);
+    setSpeechError(null);
+    if (isListening) {
+      speechProvider.abort();
+      setIsListening(false);
     }
   };
 
@@ -149,12 +280,14 @@ export default function AssessmentPage() {
 
   const handleNextStep = () => {
     if (validateStep(activeStep)) {
+      if (isListening) handleStopListening();
       setActiveStep((prev) => (Math.min(prev + 1, 6) as 1 | 2 | 3 | 4 | 5 | 6));
       window.scrollTo({ top: 0, behavior: 'smooth' });
     }
   };
 
   const handlePrevStep = () => {
+    if (isListening) handleStopListening();
     setActiveStep((prev) => (Math.max(prev - 1, 1) as 1 | 2 | 3 | 4 | 5 | 6));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -162,6 +295,8 @@ export default function AssessmentPage() {
   // Submission to Server
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isListening) handleStopListening();
+
     setServerError(null);
     setFieldErrors({});
 
@@ -172,6 +307,7 @@ export default function AssessmentPage() {
       customDescription: formData.customDescription,
       duration: formData.duration,
       contextFactors: formData.contextFactors.length === 0 ? ['none'] : formData.contextFactors,
+      inputLanguage: selectedLanguage.code,
     });
 
     if (!validationResult.success) {
@@ -181,7 +317,6 @@ export default function AssessmentPage() {
         errors[path] = err.message;
       });
       setFieldErrors(errors);
-      // Return to the first step with error
       if (errors.ageGroup) setActiveStep(1);
       else if (errors.symptoms) setActiveStep(2);
       else if (errors.duration) setActiveStep(4);
@@ -217,7 +352,10 @@ export default function AssessmentPage() {
       // Route to results page
       router.push('/results');
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'A network error occurred while submitting. Your inputs were preserved.';
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'A network error occurred while submitting. Your inputs were preserved.';
       setServerError(message);
       setIsSubmitting(false);
     }
@@ -243,6 +381,8 @@ export default function AssessmentPage() {
     { id: 'skin', label: 'Skin & Wounds' },
   ];
 
+  const filteredLanguages = searchLanguages(languageSearchQuery);
+
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12 w-full">
       {/* Header */}
@@ -255,7 +395,7 @@ export default function AssessmentPage() {
           Symptom Assessment
         </h1>
         <p className="text-slate-600 text-sm sm:text-base mt-2 max-w-2xl">
-          Complete the guided assessment below to evaluate your symptoms against our safety rules. We do not collect names, phone numbers, or identifiable records.
+          Complete the guided assessment below to evaluate your symptoms against our safety rules. Supports keyboard typing and voice input in major Indian languages.
         </p>
       </div>
 
@@ -267,14 +407,23 @@ export default function AssessmentPage() {
       {/* Step Indicator */}
       <div className="mb-8 bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
         <div className="flex items-center justify-between text-xs font-semibold text-slate-500 mb-2">
-          <span>Step {activeStep} of 6: {
-            activeStep === 1 ? 'Age Bracket' :
-            activeStep === 2 ? 'Symptom Checklist' :
-            activeStep === 3 ? 'Detailed Description' :
-            activeStep === 4 ? 'Duration' :
-            activeStep === 5 ? 'Health Context' : 'Review & Submit'
-          }</span>
-          <span className="text-teal-700 font-bold">{Math.round((activeStep / 6) * 100)}% Completed</span>
+          <span>
+            Step {activeStep} of 6:{' '}
+            {activeStep === 1
+              ? 'Age Bracket'
+              : activeStep === 2
+              ? 'Symptom Checklist'
+              : activeStep === 3
+              ? 'Detailed Description & Voice'
+              : activeStep === 4
+              ? 'Duration'
+              : activeStep === 5
+              ? 'Health Context'
+              : 'Review & Submit'}
+          </span>
+          <span className="text-teal-700 font-bold">
+            {Math.round((activeStep / 6) * 100)}% Completed
+          </span>
         </div>
         <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden">
           <div
@@ -285,18 +434,20 @@ export default function AssessmentPage() {
 
         {/* Step Tabs for direct navigation if user already completed them */}
         <div className="hidden sm:grid grid-cols-6 gap-1 pt-3 text-[11px] font-medium text-slate-500 text-center">
-          {['1. Age', '2. Symptoms', '3. Details', '4. Duration', '5. Context', '6. Review'].map((label, idx) => (
-            <button
-              key={label}
-              type="button"
-              onClick={() => setActiveStep((idx + 1) as 1 | 2 | 3 | 4 | 5 | 6)}
-              className={`py-1 rounded hover:bg-slate-50 transition ${
-                activeStep === idx + 1 ? 'text-teal-700 font-bold bg-teal-50' : ''
-              }`}
-            >
-              {label}
-            </button>
-          ))}
+          {['1. Age', '2. Symptoms', '3. Details & Voice', '4. Duration', '5. Context', '6. Review'].map(
+            (label, idx) => (
+              <button
+                key={label}
+                type="button"
+                onClick={() => setActiveStep((idx + 1) as 1 | 2 | 3 | 4 | 5 | 6)}
+                className={`py-1 rounded hover:bg-slate-50 transition ${
+                  activeStep === idx + 1 ? 'text-teal-700 font-bold bg-teal-50' : ''
+                }`}
+              >
+                {label}
+              </button>
+            )
+          )}
         </div>
       </div>
 
@@ -427,7 +578,7 @@ export default function AssessmentPage() {
             <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
               {filteredSymptoms.length === 0 ? (
                 <div className="p-8 text-center text-slate-500 text-sm border border-dashed rounded-xl">
-                  No matching symptoms found. You can write your symptoms in Step 3!
+                  No matching symptoms found. You can describe your symptoms with voice or text in Step 3!
                 </div>
               ) : (
                 filteredSymptoms.map((sym) => {
@@ -485,28 +636,161 @@ export default function AssessmentPage() {
         )}
 
         {/* ================================================================= */}
-        {/* STEP 3: FREE TEXT DESCRIPTION */}
+        {/* STEP 3: FREE TEXT DESCRIPTION & VOICE INPUT (FEATURE 4) */}
         {/* ================================================================= */}
         {activeStep === 3 && (
           <div className="space-y-6">
-            <div>
-              <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                <Stethoscope className="w-5 h-5 text-teal-600" />
-                Describe Your Symptoms in Your Own Words
-              </h2>
-              <p className="text-sm text-slate-500 mt-1">
-                Add any nuance, sensation, or context not captured by the checklist above.
-              </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                  <Stethoscope className="w-5 h-5 text-teal-600" />
+                  Describe Symptoms (Voice or Text)
+                </h2>
+                <p className="text-sm text-slate-500 mt-1">
+                  Type or use speech recognition in your preferred Indian language.
+                </p>
+              </div>
+
+              {/* Language Selector Trigger Pill */}
+              <button
+                type="button"
+                onClick={() => setIsLanguageModalOpen(true)}
+                className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl border border-slate-300 bg-slate-50 hover:bg-slate-100 text-xs font-semibold text-slate-700 transition w-fit"
+                title="Change preferred speech language"
+              >
+                <Globe className="w-3.5 h-3.5 text-teal-600" />
+                <span>
+                  {selectedLanguage.nativeName} ({selectedLanguage.name})
+                </span>
+                <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+              </button>
             </div>
 
+            {/* Voice Input Controls Bar */}
+            <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  {/* Big Accessible Microphone Button */}
+                  {isListening ? (
+                    <button
+                      type="button"
+                      onClick={handleStopListening}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-red-600 text-white font-bold text-xs sm:text-sm hover:bg-red-700 shadow-md transition animate-pulse"
+                      aria-label="Stop recording speech"
+                    >
+                      <MicOff className="w-4 h-4" />
+                      <span>Stop Recording</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleStartListening}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-teal-600 text-white font-bold text-xs sm:text-sm hover:bg-teal-700 shadow-sm transition"
+                      aria-label={`Start voice input in ${selectedLanguage.name}`}
+                    >
+                      <Mic className="w-4 h-4" />
+                      <span>Speak in {selectedLanguage.nativeName}</span>
+                    </button>
+                  )}
+
+                  <div className="text-xs text-slate-600">
+                    {isListening ? (
+                      <span className="inline-flex items-center gap-1.5 text-red-600 font-semibold animate-pulse">
+                        <span className="w-2 h-2 rounded-full bg-red-600" />
+                        Listening in {selectedLanguage.name}... Speak clearly
+                      </span>
+                    ) : (
+                      <span className="text-slate-500">
+                        Locale: <code className="font-mono bg-slate-200 px-1 py-0.5 rounded">{selectedLanguage.code}</code>
+                        {' • '}
+                        <span className="capitalize">{selectedLanguage.supportTier.replace(/_/g, ' ')}</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <span className="text-[11px] text-slate-400">
+                  {browserSpeechSupported ? 'Browser Web Speech API active' : 'Speech recognition not supported in browser'}
+                </span>
+              </div>
+
+              {/* Live Speech Feedback Bar */}
+              {isListening && liveTranscript && (
+                <div className="p-3 bg-white rounded-lg border border-teal-200 text-xs text-slate-800 shadow-xs">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-teal-700 block mb-0.5">
+                    Real-time speech transcript:
+                  </span>
+                  <p className="italic">{liveTranscript}</p>
+                </div>
+              )}
+
+              {/* Recognized Speech Review & Append Controls */}
+              {recognizedSegment && (
+                <div className="p-3.5 bg-teal-50 border border-teal-200 rounded-lg space-y-2.5 text-xs text-teal-950">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold flex items-center gap-1.5">
+                      <Volume2 className="w-3.5 h-3.5 text-teal-700" />
+                      Speech Recognized ({selectedLanguage.name}):
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setRecognizedSegment(null)}
+                      className="text-slate-400 hover:text-slate-600"
+                      title="Dismiss transcript"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <p className="bg-white p-2.5 rounded border border-teal-100 text-slate-800 italic">
+                    &ldquo;{recognizedSegment}&rdquo;
+                  </p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleAppendRecognizedText}
+                      className="px-3 py-1.5 rounded-lg bg-teal-700 text-white font-bold hover:bg-teal-800 transition"
+                    >
+                      Append to Description
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleReplaceDescription}
+                      className="px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50 transition"
+                    >
+                      Replace Text
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Speech Error Banner */}
+              {speechError && (
+                <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <span className="font-bold">Voice Input Notice:</span> {speechError}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSpeechError(null)}
+                    className="text-amber-700 hover:text-amber-900"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Textarea for Symptoms */}
             <div className="space-y-2">
               <textarea
+                ref={textareaRef}
                 rows={5}
                 value={formData.customDescription}
                 onChange={(e) =>
                   setFormData((prev) => ({ ...prev, customDescription: e.target.value }))
                 }
-                placeholder="Example: I woke up with a dull throat ache and mild chills yesterday. Able to drink fluids but feeling fatigued..."
+                placeholder="Example: I woke up with a dull throat ache and mild chills yesterday. Able to drink fluids but feeling fatigued... You may type in English or any Indian language script."
                 maxLength={1000}
                 className="w-full p-4 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-600 placeholder:text-slate-400"
               />
@@ -516,11 +800,14 @@ export default function AssessmentPage() {
               </div>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 flex items-start gap-2.5">
-              <Info className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
-              <span>
-                Our rules engine scans description text for acute safety indicators (e.g. references to chest pain, sudden numbness, or shortness of breath) to safeguard against missed red flags.
-              </span>
+            {/* Safety and No-Auto-Submit Guarantee */}
+            <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-1.5">
+              <div className="flex items-start gap-2">
+                <Info className="w-4 h-4 text-teal-600 shrink-0 mt-0.5" />
+                <span>
+                  <strong>Review Required:</strong> Voice transcription is never submitted automatically. You will have full opportunity to review and edit recognized text before generating your guidance.
+                </span>
+              </div>
             </div>
           </div>
         )}
@@ -695,7 +982,12 @@ export default function AssessmentPage() {
               {/* Description */}
               <div className="flex items-start justify-between pb-3 border-b border-slate-200">
                 <div>
-                  <span className="text-xs font-bold uppercase text-slate-500">Free-Text Description</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold uppercase text-slate-500">Free-Text Description</span>
+                    <span className="text-[10px] font-mono bg-slate-200 px-1.5 py-0.5 rounded text-slate-600">
+                      {selectedLanguage.name}
+                    </span>
+                  </div>
                   <p className="text-xs text-slate-700 mt-1 italic">
                     {formData.customDescription.trim() || 'No additional description provided.'}
                   </p>
@@ -752,7 +1044,7 @@ export default function AssessmentPage() {
             <div className="p-3 bg-teal-50 border border-teal-200 rounded-xl text-xs text-teal-900 flex items-center gap-2">
               <Lock className="w-4 h-4 text-teal-700 shrink-0" />
               <span>
-                <strong>Privacy Guaranteed:</strong> This session will not be saved to any remote medical record or persistent user database.
+                <strong>Privacy Guaranteed:</strong> This session is ephemeral and will not be saved to any remote medical record or persistent user database.
               </span>
             </div>
           </div>
@@ -820,6 +1112,118 @@ export default function AssessmentPage() {
           </div>
         </div>
       </div>
+
+      {/* =================================================================== */}
+      {/* LANGUAGE SELECTION MODAL (SEARCHABLE INDIAN LANGUAGES) */}
+      {/* =================================================================== */}
+      {isLanguageModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-xl w-full max-h-[85vh] flex flex-col overflow-hidden animate-in fade-in zoom-in-95">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-200 flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <Globe className="w-5 h-5 text-teal-600" />
+                  Select Indian Language
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Choose your language for speech recognition and symptom descriptions.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsLanguageModalOpen(false)}
+                className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Search Input */}
+            <div className="p-4 border-b border-slate-100">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                <input
+                  type="text"
+                  value={languageSearchQuery}
+                  onChange={(e) => setLanguageSearchQuery(e.target.value)}
+                  placeholder="Search by English name, native script (e.g., हिन्दी, தமிழ், Telugu)..."
+                  className="w-full pl-9 pr-4 py-2 text-xs sm:text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-teal-600"
+                  autoFocus
+                />
+              </div>
+            </div>
+
+            {/* Language List */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2">
+              {filteredLanguages.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-500">
+                  No matching Indian languages found.
+                </div>
+              ) : (
+                filteredLanguages.map((lang) => {
+                  const isSelected = selectedLanguage.code === lang.code;
+                  return (
+                    <button
+                      key={lang.code}
+                      type="button"
+                      onClick={() => handleSelectLanguage(lang)}
+                      className={`w-full text-left p-3 rounded-xl border transition flex items-center justify-between ${
+                        isSelected
+                          ? 'border-teal-600 bg-teal-50 ring-1 ring-teal-600'
+                          : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-slate-900 text-sm">
+                            {lang.nativeName}
+                          </span>
+                          <span className="text-xs text-slate-500">({lang.name})</span>
+                          <span className="text-[10px] font-mono bg-slate-100 px-1.5 py-0.5 rounded text-slate-600">
+                            {lang.code}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">{lang.supportNote}</p>
+                      </div>
+
+                      <div className="shrink-0 ml-3">
+                        {lang.supportTier === 'browser-supported' && (
+                          <span className="text-[10px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full">
+                            Voice Active
+                          </span>
+                        )}
+                        {lang.supportTier === 'experimental' && (
+                          <span className="text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                            Experimental
+                          </span>
+                        )}
+                        {lang.supportTier === 'unsupported_browser' && (
+                          <span className="text-[10px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">
+                            Text Script
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between text-xs text-slate-500">
+              <span>{INDIAN_LANGUAGES.length} Indian languages cataloged</span>
+              <button
+                type="button"
+                onClick={() => setIsLanguageModalOpen(false)}
+                className="px-4 py-1.5 rounded-lg bg-white border border-slate-300 font-semibold text-slate-700 hover:bg-slate-100"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

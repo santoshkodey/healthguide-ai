@@ -42,6 +42,7 @@ export const assessmentInputSchema = z
       .default(''),
     duration: durationEnum,
     contextFactors: z.array(contextFactorEnum).default([]),
+    inputLanguage: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     const hasSymptoms = Array.isArray(data.symptoms) && data.symptoms.length > 0;

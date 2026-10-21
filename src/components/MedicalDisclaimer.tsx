@@ -12,7 +12,7 @@ export function MedicalDisclaimer({ compact = false }: MedicalDisclaimerProps) {
       <div className="bg-amber-50 border-l-4 border-amber-500 p-3 rounded-r-lg text-xs text-amber-900 flex items-start gap-2">
         <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
         <div>
-          <span className="font-semibold">Medical Notice:</span> HealthGuide AI is an educational prototype and does not provide medical diagnoses or prescriptions. If experiencing an emergency, dial <a href="tel:112" className="font-bold underline text-amber-950">112</a> immediately.
+          <span className="font-semibold">Medical Notice:</span> HealthGuide AI provides informational care navigation and does not provide medical diagnoses or prescriptions. If experiencing an emergency, dial <a href="tel:112" className="font-bold underline text-amber-950">112</a> immediately.
         </div>
       </div>
     );
@@ -26,7 +26,7 @@ export function MedicalDisclaimer({ compact = false }: MedicalDisclaimerProps) {
         </div>
         <div className="flex-1 space-y-1.5">
           <div className="flex items-center justify-between flex-wrap gap-2">
-            <h4 className="font-bold text-amber-900 text-base">Important Medical Disclaimer & Prototype Notice</h4>
+            <h4 className="font-bold text-amber-900 text-base">Important Medical Disclaimer & Notice</h4>
             <span className="inline-flex items-center gap-1.5 text-xs bg-red-100 text-red-800 font-semibold px-2.5 py-0.5 rounded-full border border-red-200">
               <PhoneCall className="w-3 h-3" /> India Emergency: 112
             </span>

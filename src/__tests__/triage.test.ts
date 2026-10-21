@@ -163,6 +163,44 @@ describe('Safety-First Triage Engine (Deterministic Rules)', () => {
     const rawResult = result as unknown as Record<string, unknown>;
     expect(rawResult.riskScore).toBeUndefined();
     expect(rawResult.score).toBeUndefined();
-    expect(result.disclaimer).toContain('HealthGuide AI is an educational decision-support navigator');
+    expect(result.disclaimer).toContain('HealthGuide AI is an educational decision-support');
+  });
+
+  it('includes comprehensive explainability details in all evaluations', () => {
+    const input: AssessmentInput = {
+      ageGroup: 'adult_18_64',
+      symptoms: ['mild_cough'],
+      customDescription: 'Slight dry cough',
+      duration: 'less_than_24h',
+      contextFactors: ['none'],
+    };
+
+    const result = evaluateTriage(input);
+    expect(result.explainability).toBeDefined();
+    expect(result.explainability.reportedSymptoms.some((s) => s.toLowerCase().includes('cough'))).toBe(true);
+    expect(result.explainability.checkedWarningSigns.length).toBeGreaterThan(0);
+    expect(result.explainability.missingInformation.length).toBeGreaterThan(0);
+    expect(result.explainability.systemLimitations.length).toBeGreaterThan(0);
+    expect(result.explainability.logicSource).toBe('deterministic_safety_rules');
+    expect(result.explainability.clinicalReviewNotice).toBeTruthy();
+
+    // Verify warning signs audited include core red flags
+    const cardiacCheck = result.explainability.checkedWarningSigns.find((c) => c.id === 'CHECK_CARDIAC');
+    expect(cardiacCheck).toBeDefined();
+    expect(cardiacCheck?.status).toBe('not_detected');
+  });
+
+  it('marks audited warning sign as detected when emergency symptom is present', () => {
+    const input: AssessmentInput = {
+      ageGroup: 'adult_18_64',
+      symptoms: ['chest_pain_crushing'],
+      customDescription: '',
+      duration: 'less_than_24h',
+      contextFactors: ['none'],
+    };
+
+    const result = evaluateTriage(input);
+    const cardiacCheck = result.explainability.checkedWarningSigns.find((c) => c.id === 'CHECK_CARDIAC');
+    expect(cardiacCheck?.status).toBe('detected');
   });
 });

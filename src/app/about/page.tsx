@@ -28,7 +28,7 @@ export default function AboutPage() {
           About HealthGuide AI & Safety Principles
         </h1>
         <p className="text-slate-600 text-base sm:text-lg max-w-3xl leading-relaxed">
-          HealthGuide AI was built as a college hackathon prototype to solve a real human problem: the confusion people face when acute symptoms arise. Here is our complete architectural documentation, safety rules, and privacy commitments.
+          HealthGuide AI was created to solve a universal healthcare dilemma: the confusion people face when acute symptoms arise. Here is our complete architectural documentation, safety rules, and privacy commitments.
         </p>
       </div>
 
@@ -253,18 +253,18 @@ export default function AboutPage() {
         </div>
       </div>
 
-      {/* Hackathon Prototype Limitations */}
+      {/* Clinical Limitations */}
       <div className="bg-slate-50 rounded-2xl border border-slate-200 p-6 sm:p-8 space-y-4">
         <h3 className="font-bold text-slate-900 text-base flex items-center gap-2">
           <AlertTriangle className="w-5 h-5 text-amber-600" />
-          Prototype Limitations & Disclaimers
+          Clinical Limitations & Educational Notice
         </h3>
         <ul className="space-y-2 text-xs sm:text-sm text-slate-700 leading-relaxed list-disc pl-5">
           <li>
-            This application is a <strong>college hackathon demonstration</strong> designed to showcase safety-first care navigation patterns.
+            This application is an educational care-navigation demonstration. Its assessment rules have not been clinically validated in randomized trials.
           </li>
           <li>
-            The rules in <code className="font-mono text-xs bg-slate-200 px-1 py-0.5 rounded">src/lib/triage.ts</code> are a documented educational prototype and have not been validated in clinical trials. They are straightforward to replace with clinician-reviewed logic in future iterations.
+            The rules in <code className="font-mono text-xs bg-slate-200 px-1 py-0.5 rounded">src/lib/triage.ts</code> are a documented, rules-based prototype intended for care navigation, not diagnostic certainty. They are designed to be reviewed and modified by licensed clinicians before any clinical deployment.
           </li>
           <li>
             Hospital records are retrieved directly from OpenStreetMap Overpass API or Google Places API. While these are real facilities, operating hours and emergency readiness should always be verified by calling ahead when practical.

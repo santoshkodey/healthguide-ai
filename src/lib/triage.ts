@@ -1,8 +1,11 @@
 import {
   AssessmentInput,
+  ExplainabilityDetails,
   RecommendedAction,
   TriageResult,
+  TriageTier,
   TriggeredRule,
+  WarningSignCheck,
 } from '@/types/assessment';
 import { EMERGENCY_CONTACTS, GLOBAL_DISCLAIMER, SYMPTOM_DEFINITIONS } from './constants';
 
@@ -15,6 +18,8 @@ import { EMERGENCY_CONTACTS, GLOBAL_DISCLAIMER, SYMPTOM_DEFINITIONS } from './co
  * 3. Conservative Language: Never claims certainty, diagnoses, or prescribes medications.
  * 4. Failsafe Default: Ambiguous or unsupported inputs default to INCONCLUSIVE.
  * 5. Universal Caution: Even routine recommendations mandate monitoring for warning signs.
+ * 6. Full Explainability: Explicitly documents reported symptoms, audited warning signs,
+ *    clinical uncertainties, missing data, and system boundaries.
  */
 
 // Text pattern matches for critical free-text indicators
@@ -60,18 +65,21 @@ export function evaluateTriage(input: AssessmentInput): TriageResult {
   const hasNoSymptomsSelected = input.symptoms.length === 0;
 
   if (hasNoSymptomsSelected && (customText.length < 5 || isVagueText)) {
+    const rules: TriggeredRule[] = [
+      {
+        id: 'RULE_INCONCLUSIVE_INSUFFICIENT_INPUT',
+        tier: 'INCONCLUSIVE',
+        title: 'Insufficient or Ambiguous Input',
+        reason: 'No standard symptoms were selected and the free-text description did not provide recognizable clinical indications.',
+        evidence: customText ? [`Submitted text: "${customText}"`] : ['No symptoms or description provided'],
+      },
+    ];
+    const explainability = buildExplainability(input, 'INCONCLUSIVE');
     return createInconclusiveResult(
       timestamp,
       'The provided information is insufficient or too ambiguous for the configured navigation rules to offer structured guidance.',
-      [
-        {
-          id: 'RULE_INCONCLUSIVE_INSUFFICIENT_INPUT',
-          tier: 'INCONCLUSIVE',
-          title: 'Insufficient or Ambiguous Input',
-          reason: 'No standard symptoms were selected and the free-text description did not provide recognizable clinical indications.',
-          evidence: customText ? [`Submitted text: "${customText}"`] : ['No symptoms or description provided'],
-        },
-      ]
+      rules,
+      explainability
     );
   }
 
@@ -145,7 +153,8 @@ export function evaluateTriage(input: AssessmentInput): TriageResult {
 
   // If any emergency rule triggered, return EMERGENCY immediately (Warning-First)
   if (triggeredRules.some((r) => r.tier === 'EMERGENCY')) {
-    return createEmergencyResult(timestamp, triggeredRules);
+    const explainability = buildExplainability(input, 'EMERGENCY');
+    return createEmergencyResult(timestamp, triggeredRules, explainability);
   }
 
   // ---------------------------------------------------------------------------
@@ -218,7 +227,8 @@ export function evaluateTriage(input: AssessmentInput): TriageResult {
 
   // If any urgent rule triggered, return URGENT result
   if (triggeredRules.some((r) => r.tier === 'URGENT')) {
-    return createUrgentResult(timestamp, triggeredRules);
+    const explainability = buildExplainability(input, 'URGENT');
+    return createUrgentResult(timestamp, triggeredRules, explainability);
   }
 
   // ---------------------------------------------------------------------------
@@ -240,30 +250,207 @@ export function evaluateTriage(input: AssessmentInput): TriageResult {
       evidence: routineSymptoms.length > 0 ? routineSymptoms : ['Mild descriptive symptom text provided'],
     });
 
-    return createRoutineResult(timestamp, triggeredRules);
+    const explainability = buildExplainability(input, 'ROUTINE');
+    return createRoutineResult(timestamp, triggeredRules, explainability);
   }
 
   // If nothing matched, default to Inconclusive
+  const fallbackRules: TriggeredRule[] = [
+    {
+      id: 'RULE_INCONCLUSIVE_FALLBACK',
+      tier: 'INCONCLUSIVE',
+      title: 'Uncategorized Presentation',
+      reason: 'The symptom constellation does not match configured prototype patterns.',
+      evidence: customText ? [`Submitted text: "${customText}"`] : ['Input did not trigger defined emergency, urgent, or routine rule sets.'],
+    },
+  ];
+  const explainability = buildExplainability(input, 'INCONCLUSIVE');
   return createInconclusiveResult(
     timestamp,
     'The provided information did not contain recognized clinical symptom patterns to categorize under our standard guidance rules.',
-    [
-      {
-        id: 'RULE_INCONCLUSIVE_FALLBACK',
-        tier: 'INCONCLUSIVE',
-        title: 'Uncategorized Presentation',
-        reason: 'The symptom constellation does not match configured prototype patterns.',
-        evidence: customText ? [`Submitted text: "${customText}"`] : ['Input did not trigger defined emergency, urgent, or routine rule sets.'],
-      },
-    ]
+    fallbackRules,
+    explainability
   );
+}
+
+// -----------------------------------------------------------------------------
+// EXPLAINABILITY ENGINE
+// -----------------------------------------------------------------------------
+
+function buildExplainability(
+  input: AssessmentInput,
+  tier: TriageTier
+): ExplainabilityDetails {
+  const symptomsSet = new Set(input.symptoms);
+  const customText = (input.customDescription || '').toLowerCase();
+  const contextSet = new Set(input.contextFactors);
+
+  const reportedSymptoms = input.symptoms.map((id) => {
+    const sym = SYMPTOM_DEFINITIONS.find((s) => s.id === id);
+    return sym?.label || id;
+  });
+  if (input.customDescription.trim()) {
+    reportedSymptoms.push(`Free-text note: "${input.customDescription.trim()}"`);
+  }
+
+  // Audited warning signs
+  const checks: WarningSignCheck[] = [
+    {
+      id: 'CHECK_CARDIAC',
+      category: 'Cardiovascular',
+      question: 'Crushing or radiating chest pain / pressure (acute coronary warning sign)',
+      status: symptomsSet.has('chest_pain_crushing') || customText.includes('chest pain') ? 'detected' : 'not_detected',
+      reason: symptomsSet.has('chest_pain_crushing') || customText.includes('chest pain')
+        ? 'Reported in checklist or description.'
+        : 'No acute cardiac distress markers reported.',
+    },
+    {
+      id: 'CHECK_RESPIRATORY',
+      category: 'Respiratory',
+      question: 'Severe shortness of breath, gasping, or blue discoloration (respiratory failure)',
+      status: symptomsSet.has('severe_shortness_of_breath') || customText.includes('cannot breathe') || customText.includes("can't breathe") ? 'detected' : 'not_detected',
+      reason: symptomsSet.has('severe_shortness_of_breath') || customText.includes('cannot breathe') || customText.includes("can't breathe")
+        ? 'Reported in checklist or description.'
+        : 'No acute respiratory failure markers reported.',
+    },
+    {
+      id: 'CHECK_STROKE_FAST',
+      category: 'Neurological',
+      question: 'Sudden face drooping, arm weakness, or slurred speech (FAST stroke signs)',
+      status: symptomsSet.has('stroke_symptoms') || customText.includes('stroke') || customText.includes('slurred') ? 'detected' : 'not_detected',
+      reason: symptomsSet.has('stroke_symptoms') || customText.includes('stroke') || customText.includes('slurred')
+        ? 'Acute neurological asymmetry reported.'
+        : 'No focal neurological deficits reported.',
+    },
+    {
+      id: 'CHECK_SYNCOPE',
+      category: 'Neurological',
+      question: 'Sudden loss of consciousness, fainting, or collapse',
+      status: symptomsSet.has('sudden_loss_of_consciousness') || customText.includes('fainted') || customText.includes('passed out') ? 'detected' : 'not_detected',
+      reason: symptomsSet.has('sudden_loss_of_consciousness') || customText.includes('fainted') || customText.includes('passed out')
+        ? 'Loss of consciousness event reported.'
+        : 'No fainting or collapse reported.',
+    },
+    {
+      id: 'CHECK_HEMORRHAGE',
+      category: 'Critical',
+      question: 'Coughing or vomiting blood, or uncontrolled heavy bleeding',
+      status: symptomsSet.has('coughing_vomiting_blood') || symptomsSet.has('uncontrolled_bleeding') || customText.includes('vomiting blood') || customText.includes('coughing blood') ? 'detected' : 'not_detected',
+      reason: symptomsSet.has('coughing_vomiting_blood') || symptomsSet.has('uncontrolled_bleeding') || customText.includes('vomiting blood') || customText.includes('coughing blood')
+        ? 'Active hemorrhage or blood loss reported.'
+        : 'No acute bleeding reported.',
+    },
+    {
+      id: 'CHECK_ANAPHYLAXIS',
+      category: 'Allergic / Airway',
+      question: 'Severe throat, lip, or tongue swelling with breathing distress (anaphylaxis)',
+      status: symptomsSet.has('anaphylaxis_signs') || customText.includes('anaphylaxis') || customText.includes('throat closing') ? 'detected' : 'not_detected',
+      reason: symptomsSet.has('anaphylaxis_signs') || customText.includes('anaphylaxis') || customText.includes('throat closing')
+        ? 'Airway compromise or severe allergic reaction reported.'
+        : 'No anaphylactic airway symptoms reported.',
+    },
+    {
+      id: 'CHECK_THUNDERCLAP_HEADACHE',
+      category: 'Neurological',
+      question: 'Sudden explosive severe headache reaching peak intensity in seconds ("worst of life")',
+      status: symptomsSet.has('worst_headache_of_life') || customText.includes('worst headache') || customText.includes('thunderclap') ? 'detected' : 'not_detected',
+      reason: symptomsSet.has('worst_headache_of_life') || customText.includes('worst headache') || customText.includes('thunderclap')
+        ? 'Abrupt onset severe headache reported.'
+        : 'No thunderclap headache pattern reported.',
+    },
+    {
+      id: 'CHECK_PEDIATRIC_VULNERABILITY',
+      category: 'Pediatric',
+      question: 'Infant (< 1 year) with fever or acute illness requiring immediate pediatric evaluation',
+      status: input.ageGroup === 'infant_under_1' && (symptomsSet.has('low_grade_fever') || symptomsSet.has('persistent_high_fever') || customText.includes('fever')) ? 'detected' : 'not_detected',
+      reason: input.ageGroup === 'infant_under_1'
+        ? (symptomsSet.has('low_grade_fever') || symptomsSet.has('persistent_high_fever') ? 'Fever reported in infant under 1 year.' : 'Patient is infant; no acute fever reported.')
+        : 'Not applicable (patient age is not infant < 1 year).',
+    },
+    {
+      id: 'CHECK_OBSTETRIC',
+      category: 'Obstetric',
+      question: 'Acute severe abdominal pain or bleeding during pregnancy',
+      status: contextSet.has('pregnancy') && (symptomsSet.has('acute_severe_abdominal_pain') || symptomsSet.has('uncontrolled_bleeding')) ? 'detected' : 'not_detected',
+      reason: contextSet.has('pregnancy')
+        ? (symptomsSet.has('acute_severe_abdominal_pain') ? 'Severe abdominal pain reported during pregnancy.' : 'Pregnant; no acute abdominal pain/bleeding reported.')
+        : 'Not applicable (pregnancy not reported in context).',
+    },
+    {
+      id: 'CHECK_PERSISTENT_HIGH_FEVER',
+      category: 'Infection / Systemic',
+      question: 'High fever (> 39°C / 102.2°F) persisting for 3 or more days',
+      status: symptomsSet.has('persistent_high_fever') || customText.includes('high fever') ? 'detected' : 'not_detected',
+      reason: symptomsSet.has('persistent_high_fever') || customText.includes('high fever')
+        ? 'Prolonged high fever reported.'
+        : 'No prolonged high fever reported.',
+    },
+    {
+      id: 'CHECK_DEHYDRATION_RISK',
+      category: 'Gastrointestinal',
+      question: 'Persistent vomiting unable to retain fluids for over 24 hours',
+      status: symptomsSet.has('inability_to_keep_fluids') || customText.includes('cannot keep water') || customText.includes("can't keep water") ? 'detected' : 'not_detected',
+      reason: symptomsSet.has('inability_to_keep_fluids') || customText.includes('cannot keep water') || customText.includes("can't keep water")
+        ? 'Acute dehydration risk reported.'
+        : 'Oral hydration reported as maintained.',
+    },
+    {
+      id: 'CHECK_PROLONGED_DURATION',
+      category: 'Progression',
+      question: 'Symptom duration exceeding 14 days without clinical resolution',
+      status: input.duration === 'more_than_2_weeks' ? 'detected' : 'not_detected',
+      reason: input.duration === 'more_than_2_weeks'
+        ? 'Symptoms have persisted for more than two weeks.'
+        : `Duration (${input.duration.replace(/_/g, ' ')}) is under two weeks.`,
+    },
+  ];
+
+  let guidanceRationale = '';
+  if (tier === 'EMERGENCY') {
+    guidanceRationale = 'Immediate emergency care is recommended because one or more critical warning signs (red flags) were identified. Configured emergency signs take priority over all ordinary guidance.';
+  } else if (tier === 'URGENT') {
+    guidanceRationale = 'Same-day urgent medical evaluation is recommended because symptoms indicate acute progression or vulnerability factors (such as prolonged fever or comorbidities) without immediate life-threatening emergency signs.';
+  } else if (tier === 'ROUTINE') {
+    guidanceRationale = 'Routine primary care and monitored self-care are indicated because reported symptoms match mild, self-limiting patterns with no emergency or urgent warning signs detected.';
+  } else {
+    guidanceRationale = 'The assessment is inconclusive because the provided information was too limited, ambiguous, or outside the scope of configured safety rules. An in-person clinical exam is advised.';
+  }
+
+  const missingInformation = [
+    'Real-time vital signs (blood pressure, pulse rate, oxygen saturation SpO2, core body temperature)',
+    'In-person physical examination (lung/heart auscultation, abdominal palpation, throat examination)',
+    'Diagnostic clinical laboratory tests (complete blood count, metabolic panel, inflammatory markers)',
+    'Complete medical records, current prescription medication list, and allergy profile',
+  ];
+
+  const systemLimitations = [
+    'Cannot diagnose specific clinical diseases, pathogens (viral vs bacterial), or pathological conditions.',
+    'Absence of reported warning signs does NOT guarantee that a person is healthy or that an illness will not progress.',
+    'Cannot perform clinical imaging (X-rays, CT/MRI scans, ultrasound) or 12-lead electrocardiograms (ECG/EKG).',
+    'Automated rules provide decision support for navigation only and require clinical evaluation.',
+  ];
+
+  return {
+    reportedSymptoms,
+    checkedWarningSigns: checks,
+    guidanceRationale,
+    missingInformation,
+    systemLimitations,
+    logicSource: 'deterministic_safety_rules',
+    clinicalReviewNotice:
+      'This rules-based prototype is an educational care navigator and requires qualified clinical review prior to any clinical deployment. Always consult a physician.',
+  };
 }
 
 // -----------------------------------------------------------------------------
 // RESULT BUILDERS
 // -----------------------------------------------------------------------------
 
-function createEmergencyResult(timestamp: string, triggeredRules: TriggeredRule[]): TriageResult {
+function createEmergencyResult(
+  timestamp: string,
+  triggeredRules: TriggeredRule[],
+  explainability: ExplainabilityDetails
+): TriageResult {
   const actions: RecommendedAction[] = [
     {
       order: 1,
@@ -309,12 +496,17 @@ function createEmergencyResult(timestamp: string, triggeredRules: TriggeredRule[
       'Watch for changes in alertness, confusion, or slurred speech.',
       'Check for spreading chest pressure or radiating pain.',
     ],
+    explainability,
     disclaimer: GLOBAL_DISCLAIMER,
     timestamp,
   };
 }
 
-function createUrgentResult(timestamp: string, triggeredRules: TriggeredRule[]): TriageResult {
+function createUrgentResult(
+  timestamp: string,
+  triggeredRules: TriggeredRule[],
+  explainability: ExplainabilityDetails
+): TriageResult {
   const actions: RecommendedAction[] = [
     {
       order: 1,
@@ -354,12 +546,17 @@ function createUrgentResult(timestamp: string, triggeredRules: TriggeredRule[]):
       'Ensure adequate fluid intake and monitor urine color (pale straw is ideal).',
       'Seek emergency care immediately if you develop sudden shortness of breath or unbearable pain.',
     ],
+    explainability,
     disclaimer: GLOBAL_DISCLAIMER,
     timestamp,
   };
 }
 
-function createRoutineResult(timestamp: string, triggeredRules: TriggeredRule[]): TriageResult {
+function createRoutineResult(
+  timestamp: string,
+  triggeredRules: TriggeredRule[],
+  explainability: ExplainabilityDetails
+): TriageResult {
   const actions: RecommendedAction[] = [
     {
       order: 1,
@@ -399,6 +596,7 @@ function createRoutineResult(timestamp: string, triggeredRules: TriggeredRule[])
       'Red flag: Any new chest pain, shortness of breath, or stiff neck.',
       'Red flag: Inability to keep fluids down for more than 24 hours.',
     ],
+    explainability,
     disclaimer: GLOBAL_DISCLAIMER,
     timestamp,
   };
@@ -407,7 +605,8 @@ function createRoutineResult(timestamp: string, triggeredRules: TriggeredRule[])
 function createInconclusiveResult(
   timestamp: string,
   summary: string,
-  triggeredRules: TriggeredRule[]
+  triggeredRules: TriggeredRule[],
+  explainability: ExplainabilityDetails
 ): TriageResult {
   const actions: RecommendedAction[] = [
     {
@@ -445,6 +644,7 @@ function createInconclusiveResult(
       'Keep a written log of when symptoms occur, their severity, and what makes them better or worse.',
       'If you develop any chest pain, severe shortness of breath, or confusion, call 112 immediately.',
     ],
+    explainability,
     disclaimer: GLOBAL_DISCLAIMER,
     timestamp,
   };

@@ -73,7 +73,7 @@ export async function searchHospitals(options: SearchOptions): Promise<HospitalS
       )}&format=json&limit=1`;
       const geoRes = await fetch(geoUrl, {
         headers: {
-          'User-Agent': 'HealthGuideAI-Navigator/1.0 (Hackathon Prototype)',
+          'User-Agent': 'HealthGuideAI-Navigator/1.0 (Care Navigation Platform)',
         },
         signal: AbortSignal.timeout(6000),
       });
@@ -172,7 +172,7 @@ out center 15;`;
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'HealthGuideAI-Navigator/1.0 (Hackathon Prototype)',
+          'User-Agent': 'HealthGuideAI-Navigator/1.0 (Care Navigation Platform)',
         },
         body: `data=${encodeURIComponent(overpassQuery)}`,
         signal: AbortSignal.timeout(8000),

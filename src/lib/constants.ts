@@ -240,4 +240,4 @@ export const EMERGENCY_CONTACTS: EmergencyContact[] = [
 ];
 
 export const GLOBAL_DISCLAIMER =
-  'HealthGuide AI is an educational decision-support navigator built for a hackathon demonstration. It is NOT a diagnostic tool, medical device, or replacement for professional clinical judgment. If you or someone around you is experiencing life-threatening symptoms, call emergency services (112 in India, 911 in the US) or proceed to the nearest emergency room immediately.';
+  'HealthGuide AI is an educational decision-support care navigator. It is NOT a diagnostic tool, medical device, or replacement for professional clinical judgment. If you or someone around you is experiencing life-threatening symptoms, call emergency services (112 in India, 911 in the US) or proceed to the nearest emergency room immediately.';
